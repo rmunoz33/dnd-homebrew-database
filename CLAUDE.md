@@ -4,174 +4,125 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a D&D 5th Edition database repository that feeds into the D&D 5e API (http://dnd5eapi.co/). It contains JSON data files for game content (races, classes, spells, monsters, etc.) that are loaded into MongoDB. The database supports both 2014 and 2024 editions of D&D 5e rules.
+This is a D&D 5th Edition database repository forked from [5e-bits/5e-database](https://github.com/5e-bits/5e-database), extended with homebrew content. It contains JSON data files for game content (races, classes, spells, monsters, etc.) that are loaded into MongoDB. The database supports both 2014 and 2024 editions of D&D 5e rules.
 
-## Key Commands
+This repo is the data layer for the Fables and Sagas project — it feeds MongoDB Atlas, which is queried directly by `dnd-homebrew-frontend`.
 
-### Development
+## Node Version
+
+Requires **Node.js 22.x** (pinned to 22.14.0 in `.nvmrc`).
+
+## Commands
+
 ```bash
-npm run lint                    # Run ESLint on all files
-npm test                        # Run Vitest tests
-npm run coverage                # Run tests with coverage report
-npm run build:ts                # Compile TypeScript scripts in scripts/ directory
+npm run lint                    # ESLint (includes JSON file linting)
+npm test                        # Vitest — validates JSON data integrity
+npm run coverage                # Tests with V8 coverage report
+npm run build:ts                # Compile TypeScript scripts to scripts/built/
+
+npm run db:refresh              # Full reload: drop all collections, reload from JSON (requires MONGODB_URI)
+npm run db:update               # Incremental: only files changed in the most recent git commit (requires MONGODB_URI)
 ```
 
-### Database Operations
+### Running a Single Test File
+
 ```bash
-# Load all JSON data into MongoDB (full refresh)
-MONGODB_URI=mongodb://localhost/5e-database npm run db:refresh
-
-# Update specific collections
-MONGODB_URI=mongodb://localhost/5e-database npm run db:update
-```
-
-### Docker
-```bash
-# Build and run locally
-docker build -t 5e-database .
-docker run -i -t 5e-database:latest
-
-# Run pre-built image (non-M1)
-docker run ghcr.io/5e-bits/5e-database:latest
+npx vitest run src/2014/tests/tables.test.js
+npx vitest run src/2024/tests/tables.test.js
 ```
 
 ## Architecture
 
-### Data Structure
+### Data Files
 
-- **`src/2014/`** - Contains all 2014 edition JSON files (25 files)
-- **`src/2024/`** - Contains 2024 edition JSON files (partial set, 10 files)
-- All JSON files follow naming convention: `5e-SRD-{CollectionName}.json`
-
-### Source Attribution System
-
-Every item in the database includes a `"source"` field to distinguish content origin:
-- `"source": "srd"` - Official SRD content (all existing items)
-- `"source": "homebrew-base"` - First wave of custom homebrew content
-- Future sources: `"homebrew-space"`, `"homebrew-christmas-edition"`, etc.
-
-This field allows filtering and querying by content type.
-
-### Database Scripts
-
-Located in `scripts/` directory (TypeScript):
-
-- **`dbRefresh.ts`** - Drops all collections and reloads from JSON files
-- **`dbUpdate.ts`** - Updates specific collections without dropping
-  - **Important**: Only processes files that were modified in the most recent git commit
-  - If you need to deploy changes from multiple commits, use `db:refresh` instead
-- **`dbUtils.ts`** - Shared utilities for database operations:
-  - Collection name extraction from file paths
-  - Index management
-  - MongoDB URI validation
+- **`src/2014/`** — 25 JSON files (complete 2014 SRD + homebrew)
+- **`src/2024/`** — 14 JSON files (partial 2024 SRD + homebrew)
+- Naming convention: `5e-SRD-{CollectionName}.json`
+- Each file contains an array of game objects with `index`, `name`, `url`, and `source` fields
 
 ### Collection Naming
 
-JSON files are converted to MongoDB collections with prefixes based on edition:
-- `src/2014/5e-SRD-Ability-Scores.json` → `2014-ability-scores` collection
-- `src/2024/5e-SRD-Skills.json` → `2024-skills` collection
+JSON files map to MongoDB collections with edition prefixes derived from the parent directory:
+- `src/2014/5e-SRD-Ability-Scores.json` → `2014-ability-scores`
+- `src/2024/5e-SRD-Skills.json` → `2024-skills`
 
-The scripts automatically handle this conversion using the parent directory name.
+### Source Attribution
 
-### JSON File Structure
+Every item has a `"source"` field:
+- `"srd"` — Official SRD content
+- `"homebrew-base"` — Custom homebrew content
+- Future variants: `"homebrew-space"`, `"homebrew-christmas-edition"`, etc.
 
-Each JSON file contains an array of game objects. Common fields:
-- `index` - Unique identifier (kebab-case)
-- `name` - Display name
-- `url` - API endpoint path
-- `source` - Content origin (srd/homebrew-base/etc.)
-- Additional fields vary by content type
+### Database Scripts (`scripts/`)
 
-Example subraces structure:
-```json
-{
-  "index": "forge-dwarf",
-  "name": "Forge Dwarf",
-  "source": "homebrew-base",
-  "race": { "index": "dwarf", "name": "Dwarf", "url": "/api/2014/races/dwarf" },
-  "desc": "Description text...",
-  "ability_bonuses": [...],
-  "starting_proficiencies": [...],
-  "racial_traits": [...]
-}
-```
+- **`dbRefresh.ts`** — Drops all collections and reloads everything from JSON. Use when you need a guaranteed full sync.
+- **`dbUpdate.ts`** — Uses `git diff` to find files changed in the latest commit and updates only those collections. Used by CI. **Will miss changes from earlier commits** — use `db:refresh` if changes span multiple commits.
+- **`dbUtils.ts`** — Shared utilities: collection name extraction, index management, MongoDB URI validation.
+- **`update/gitUtils.ts`** — Git diff parsing for incremental updates.
+- **`update/processor.ts`** — Processes individual file additions, modifications, and deletions.
 
-## Contributing Guidelines
+Scripts compile to `scripts/built/` via `npm run build:ts` (CommonJS output, ES2015 target).
 
-### Commit Message Format
+### What Tests Validate
 
-This project uses Semantic Release. Follow these conventions:
+Tests are data integrity checks on JSON files, not unit tests on code:
 
-- `feat(scope): description` - Minor feature release
-- `fix(scope): description` - Patch fix release
-- `perf(scope): description` with `BREAKING CHANGE:` footer - Major release
+1. **Duplicate indices** — Every `index` value must be unique within its JSON file
+2. **Broken links** — Every `url` reference in any nested object must point to an existing entry with matching `name` and `index`
 
-**Important**: Do NOT include AI attribution in commit messages or pull request descriptions. Commits should be attributed to the human developer only. Do not add phrases like "Generated with Claude Code", "Co-Authored-By: Claude", or similar AI credits.
+When adding or editing JSON entries, ensure index uniqueness and that all cross-references (`url`, `name`, `index` in nested objects) match existing entries.
 
-### Adding Homebrew Content
+## Adding Homebrew Content
 
-1. Add new entries to appropriate JSON files in `src/2014/` or `src/2024/`
-2. Set `"source": "homebrew-base"` (or appropriate homebrew variant)
-3. Follow existing structure and naming conventions
-4. Ensure `index` values are unique and use kebab-case
-5. Test with `npm run db:refresh` before committing
+1. Add entries to JSON files in `src/2014/` or `src/2024/`
+2. Set `"source": "homebrew-base"` (or appropriate variant)
+3. Use unique kebab-case `index` values
+4. Ensure all `url` references point to existing entries
+5. Run `npm test` to validate data integrity
+6. Test with `npm run db:refresh` before committing
 
 ### Copyright Considerations
 
 - SRD content is safe to include
-- Homebrew content must be sufficiently different from copyrighted WotC material
-- Avoid using exact stat blocks or descriptions from non-SRD sources
+- Homebrew must be sufficiently different from copyrighted WotC material
 - Change names, mechanics, and flavor text to create legally distinct content
 
-## MongoDB Requirements
+## Commit Message Format
 
-- MongoDB must be installed locally for development, or use MongoDB Atlas
-- Set `MONGODB_URI` environment variable before running database scripts
-- Default: `mongodb://localhost/5e-database`
-- Database operations create/update collections with edition-specific prefixes
-- For local development, connection string can be stored in `.env` file (not tracked in git)
+This project uses Semantic Release:
+- `feat(scope): description` — Minor release
+- `fix(scope): description` — Patch release
+- `perf(scope): description` with `BREAKING CHANGE:` footer — Major release
 
-## MongoDB MCP Integration
-
-This project has MongoDB MCP (Model Context Protocol) configured for Claude Code. The MCP server enables:
-- Direct database queries using natural language
-- CRUD operations on collections
-- Schema inspection and collection management
-- Atlas cluster management (with API credentials)
-
-The MCP is configured to connect to MongoDB Atlas using the connection string from environment variables.
+**Important**: Do NOT include AI attribution in commit messages or PR descriptions.
 
 ## CI/CD Pipeline
 
-The GitHub Actions workflow (`.github/workflows/ci.yml`) automatically:
+GitHub Actions (`.github/workflows/ci.yml`):
+1. **On PRs**: Lint + tests + PR title validation
+2. **On push to main**: Lint, tests, `db:update` deploy, semantic release, Docker container build
 
-1. **On Pull Requests**: Runs lint and tests
-2. **On Push to Main**:
-   - Runs lint and tests
-   - Deploys database changes using `npm run db:update`
-   - Creates semantic releases
-   - Builds and publishes Docker container
-   - Triggers downstream API updates
+The deploy step requires `MONGODB_URI` as a GitHub repository secret.
 
-**Important**: The deploy step requires `MONGODB_URI` to be set as a GitHub repository secret at Settings → Secrets and variables → Actions.
+Manual full refresh: Actions tab → "Manual Database Refresh" → Run workflow.
 
-## Manual Database Operations
+## MongoDB
 
-If automatic deployment fails or you need to manually refresh the database:
+- Set `MONGODB_URI` env var or use `.env` file (not committed)
+- Production uses MongoDB Atlas; local dev can use local MongoDB
 
-1. **Via GitHub Actions**: Go to Actions tab → "Manual Database Refresh" → Run workflow
-2. **Locally**: `MONGODB_URI=<your-connection-string> npm run db:refresh`
+### MCP Integration
 
-### When to Use db:refresh vs db:update
+This project has MongoDB MCP configured for Claude Code, enabling direct database queries, CRUD operations, schema inspection, and Atlas cluster management.
 
-- **`db:update`** (used in CI/CD pipeline):
-  - Only processes files modified in the most recent commit
-  - Faster, incremental updates
-  - May miss changes if multiple commits modify different files
+## Upstream Sync
 
-- **`db:refresh`** (used in Manual Database Refresh workflow):
-  - Drops all collections and reloads everything
-  - Slower but guaranteed to include all changes
-  - Use when `db:update` misses changes from earlier commits
+This repo tracks [5e-bits/5e-database](https://github.com/5e-bits/5e-database) via a git remote named `upstream`. To incorporate upstream SRD updates:
 
-**Tip**: If you push multiple commits and some changes don't appear in the database, run the "Manual Database Refresh" workflow to ensure all changes are deployed.
+```bash
+git fetch upstream
+git diff main..upstream/main -- src/    # Review upstream changes to data files
+git merge upstream/main                 # Merge (resolve conflicts with homebrew additions)
+```
+
+After merging, run `npm test` to verify data integrity and `npm run db:refresh` to reload MongoDB.
